@@ -117,9 +117,38 @@ langchain4j-demo/
 
 ## Phase 路线图
 
-- [x] Phase 1.1: 项目搭建 + 第一个 AI 对话 ← **当前**
-- [ ] Phase 1.2: 接入 ChatMemory 实现多轮对话
-- [ ] Phase 1.3: 接入 EmbeddingModel + PgVector 实现 RAG
-- [ ] Phase 1.4: 文档解析 + 文本分片 + 向量入库
-- [ ] Phase 2.1: Function Calling（Agent工具调用）
-- [ ] Phase 2.2: 多Agent协作
+- [x] Phase 1.1: 项目搭建 + 第一个 AI 对话（同步 + 流式）
+- [x] Phase 1.2: 多轮对话 + ChatMemory（手写实现）
+- [x] Phase 1.3: StreamingChatModel 真正流式输出（逐 token 推送 SSE）
+- [ ] Phase 2.1: Prompt 工程（CoT/Few-Shot/结构化输出）
+- [ ] Phase 2.2: 接入 LangChain4j 官方 ChatMemory API
+- [ ] Phase 2.3: 接入 EmbeddingModel + 向量存储（RAG 基础）
+
+---
+
+## 已完成功能速查
+
+| 功能 | 文件 | 完成时间 |
+|------|------|----------|
+| Spring Boot 手动装配 AI 模型（不用 starter） | `AiModelConfig.java` | 06.06 |
+| SystemMessage 角色设定（电力行业助手） | `ChatService.java` L46-57 | 06.06 |
+| 同步对话接口 `POST /api/chat` | `ChatController.chat()` | 06.06 |
+| 多轮对话 `POST /api/chat/multi`（手写 ChatMemory） | `ChatService.chatWithMemory()` | 06.12 |
+| 清空/查看对话历史 | `ChatController.clearHistory()` / `getHistory()` | 06.12 |
+| **真正流式输出 `POST /api/chat/stream`（逐 token 推送）** | `ChatService.streamChat()` + `ChatController.chatStream()` | **06.14** |
+
+---
+
+## 流式接口测试（真正逐 token 推送）
+
+> 启动项目后，用 curl 测试（注意 `-N` 参数禁用缓冲，才能看到逐字效果）
+
+```bash
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d "{\"message\": \"用一句话解释什么是台区线损\"}"
+```
+
+**预期效果**：前端（或 curl）会收到多个 SSE event，每个 event 包含一个 token 片段，最终实现"打字机效果"。
+
+**判断流式是否真正生效**：如果响应是一次收到完整句子 → 失败（假流式）；如果是一个字一个字收到 → 成功（真流式）。

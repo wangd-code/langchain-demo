@@ -133,13 +133,64 @@ public class ChatService {
     }
 
     /**
-     * 流式对话（逐token返回，打字机效果）
+     * 流式对话（逐token推送，真正的打字机效果）
      *
-     * @param userMessage 用户输入
-     * @return CompletableFuture，流式拼接完整回复
+     * 核心概念：
+     * - StreamingChatLanguageModel 的 chat() 方法接受一个 StreamingChatResponseHandler 回调
+     * - onPartialResponse(String) ：每收到一个 token 片段就触发，适合 SSE 逐字推送
+     * - onCompleteResponse(ChatResponse) ：完整响应接收完毕时触发
+     * - onError(Throwable)              ：发生异常时触发
+     *
+     * @param userMessage  用户输入
+     * @param onToken      每收到一个 token 片段时的回调（推送 SSE event 的地方）
+     * @param onComplete   完整响应接收完毕时的回调（完成 SSE stream 的地方）
+     * @param onError      发生异常时的回调（推送错误事件的地方）
      */
-    public CompletableFuture<String> chatStream(String userMessage) {
+    public void streamChat(
+            String userMessage,
+            java.util.function.Consumer<String> onToken,
+            java.lang.Runnable onComplete,
+            java.util.function.Consumer<Throwable> onError
+    ) {
         log.info("流式提问: {}", userMessage);
+
+        List<ChatMessage> messages = List.of(
+                SystemMessage.from(POWER_INDUSTRY_SYSTEM_PROMPT),
+                UserMessage.from(userMessage)
+        );
+
+        streamingChatModel.chat(messages, new StreamingChatResponseHandler() {
+            @Override
+            public void onPartialResponse(String partialResponse) {
+                // 每收到一个 token 片段，立即回调（Controller 层在这里推送 SSE event）
+                log.debug("收到 token 片段: {}", partialResponse);
+                onToken.accept(partialResponse);
+            }
+
+            @Override
+            public void onCompleteResponse(ChatResponse response) {
+                // 完整响应接收完毕
+                log.info("流式回复完成");
+                onComplete.run();
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                log.error("流式回复异常", error);
+                onError.accept(error);
+            }
+        });
+    }
+
+    /**
+     * 流式对话（返回 CompletableFuture，适用于不需要逐 token 推送的场景）
+     *
+     * @deprecated 此方法为"假流式"（等待完整响应后一次性返回），
+     *             如需真正的逐 token 推送，请使用 {@link #streamChat(String, Consumer, Runnable, Consumer)}
+     */
+    @Deprecated
+    public CompletableFuture<String> chatStream(String userMessage) {
+        log.info("[已废弃]流式提问: {}", userMessage);
 
         CompletableFuture<String> future = new CompletableFuture<>();
         StringBuilder responseBuilder = new StringBuilder();
@@ -153,7 +204,6 @@ public class ChatService {
             @Override
             public void onPartialResponse(String partialResponse) {
                 responseBuilder.append(partialResponse);
-                // TODO: Phase 2 通过 SSE 推送到前端
                 log.debug("流式token: {}", partialResponse);
             }
 

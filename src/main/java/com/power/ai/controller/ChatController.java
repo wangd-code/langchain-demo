@@ -9,9 +9,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * 聊天接口 - REST API 层
@@ -32,7 +29,6 @@ import java.util.concurrent.Executors;
 public class ChatController {
 
     private final ChatService chatService;
-    private final ExecutorService executor = Executors.newCachedThreadPool();
 
     /**
      * 简单对话接口
@@ -57,7 +53,13 @@ public class ChatController {
     }
 
     /**
-     * 流式对话接口（SSE）
+     * 流式对话接口（SSE，真正的逐 token 推送）
+     *
+     * 实现原理：
+     * 1. 调用 ChatService.streamChat()，传入三个回调
+     * 2. onToken 回调：每收到一个 token 片段，立即通过 SSE 推送给前端
+     * 3. onComplete 回调：推送 [DONE] 标记，关闭 SSE 连接
+     * 4. onError 回调：推送错误信息，关闭 SSE 连接
      *
      * 示例请求：
      * curl -N -X POST http://localhost:8080/api/chat/stream \
@@ -79,20 +81,41 @@ public class ChatController {
             return emitter;
         }
 
-        executor.submit(() -> {
-            try {
-                CompletableFuture<String> future = chatService.chatStream(message);
-
-                // 等待完整响应后一次性返回
-                // TODO: Phase 2 改为逐token推送
-                String response = future.get();
-                emitter.send(SseEmitter.event().data(response));
-                emitter.complete();
-            } catch (Exception e) {
-                log.error("流式对话异常", e);
-                emitter.completeWithError(e);
+        // 直接调用 streamChat，在回调里逐 token 推送（真正的流式）
+        chatService.streamChat(message,
+            // onToken：每收到一个 token 片段，立即推送
+            token -> {
+                try {
+                    emitter.send(SseEmitter.event().data(token).build());
+                } catch (IOException e) {
+                    log.error("SSE 推送 token 失败", e);
+                }
+            },
+            // onComplete：推送 [DONE] 标记，关闭连接
+            () -> {
+                try {
+                    emitter.send(SseEmitter.event().data("[DONE]").build());
+                    emitter.complete();
+                } catch (IOException e) {
+                    log.error("SSE 完成推送失败", e);
+                }
+            },
+            // onError：推送错误信息，关闭连接
+            error -> {
+                log.error("流式对话异常", error);
+                try {
+                    String errorMsg = error.getMessage() != null
+                            ? error.getMessage().replace("\"", "\\\"")
+                            : "未知错误";
+                    emitter.send(SseEmitter.event()
+                            .data("{\"error\": \"" + errorMsg + "\"}")
+                            .build());
+                } catch (IOException ex) {
+                    // ignore
+                }
+                emitter.completeWithError(error);
             }
-        });
+        );
 
         return emitter;
     }

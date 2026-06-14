@@ -41,9 +41,9 @@ spring:
 # --- 方案4: DeepSeek（当前使用）---
 ai:
   model:
-    base-url: https://api.deepseek.com
+    base-url: https://api.deepseek.com/v1
     api-key: ${ai.model.deepseek-api-key}
-    model-name: deepseek-v4-flash
+    model-name: deepseek-chat
     temperature: 0.3
     max-tokens: 1024
 
